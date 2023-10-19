@@ -1,15 +1,13 @@
 const express = require('express');
 const app = express();
 const sqlite3 = require('sqlite3').verbose();
-// Define routes and middleware here
-
+const db = new sqlite3.Database("healthtrack");
 const port = process.env.PORT || 3000;
 
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
 
-const db = new sqlite3.Database("healthtrack");
 app.use(express.json())
 
 db.run('create table if not exists data(' +
@@ -27,8 +25,48 @@ db.run('create table if not exists data(' +
         }
 });
     
+const validateNID = (req, res, next) => {
+    const { patient_nid } = req.body;
+
+    // Remove non-digit characters
+    const nidWithoutSpaces = patient_nid.replace(/\D/g, '');
+
+    if (nidWithoutSpaces.length !== 16) {
+        return res.status(400).json({ error: "NID must be a 16-digit number" });
+    }
+    next();
+};
+
+const checkDuplicateNID = (req, res, next) => {
+    const { patient_nid } = req.body;
+
+    // Check if the NID already exists in the database
+    db.get('SELECT * FROM data WHERE patient_nid = ?', [patient_nid], (err, row) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+        if (row) {
+            return res.status(400).json({ error: "A patient with the same NID already exists" });
+        }
+        next();
+    });
+};
+
+app.post('/api/data', checkDuplicateNID, (req, res) => {
+    const { patient_name, patient_nid, patient_temp, patient_frequent_sickness } = req.body;
+    db.run(
+        'INSERT INTO data(patient_name, patient_nid, patient_temp, patient_frequent_sickness) VALUES (?, ?, ?, ?)',
+        [patient_name, patient_nid, patient_temp, patient_frequent_sickness],
+        function (err) {
+            if (err) {
+                return res.status(400).json({ error: "A patient with the same name or NID already exists" });
+            }
+            res.json({ id: this.lastID });
+        }
+    );
+});
 //POST
-app.post('/api/data',  (req, res) => {
+app.post('/api/data', validateNID, checkDuplicateNID, (req, res) => {
     const { patient_name, patient_nid, patient_temp, patient_frequent_sickness } = req.body;
     db.run(
         'INSERT INTO data(patient_name, patient_nid, patient_temp, patient_frequent_sickness) VALUES (?, ?, ?, ?)',
@@ -42,7 +80,7 @@ app.post('/api/data',  (req, res) => {
     );
 });
 app.get('/', (req, res) => {
-    res.send('welcome to Health tracking system');
+    res.send('Welcome to HealthTrack Pro Plus');
 })
 //Get all patients data
 app.get('/api/data', (req, res) => {
@@ -53,7 +91,7 @@ app.get('/api/data', (req, res) => {
         res.json(rows);
     });
 });
-//get patients data by id
+//get patient data by id
 app.get('/api/data/:id', (req, res) => {
     const id = req.params.id;
     db.get('SELECT * FROM data WHERE patient_id = ?', [id], (err, row) => {
